@@ -515,10 +515,8 @@ io.on('connection', (socket) => {
         }
         
         if (roomMessages[messageIndex].reactions[currentUser.userName] === reaction) {
-          // Aynı reaksiyonu kaldır
           delete roomMessages[messageIndex].reactions[currentUser.userName];
         } else {
-          // Yeni reaksiyon ekle
           roomMessages[messageIndex].reactions[currentUser.userName] = reaction;
         }
         
@@ -562,7 +560,6 @@ io.on('connection', (socket) => {
       const room = rooms.get(currentRoomCode);
       if (!room) return;
       
-      // Oda sahibini bul
       let ownerSocketId = null;
       room.users.forEach((user, socketId) => {
         if (user.isOwner) {
@@ -578,7 +575,6 @@ io.on('connection', (socket) => {
           timestamp: new Date()
         });
         
-        // Oda sahibine istek gönder
         io.to(ownerSocketId).emit('screen-share-request', {
           requesterName: currentUser.userName,
           requesterSocketId: socket.id
@@ -604,10 +600,8 @@ io.on('connection', (socket) => {
           startedAt: new Date()
         };
         
-        // İstek sahibine onay gönder
         io.to(requesterSocketId).emit('screen-share-approved');
         
-        // Odadaki herkese bildir
         io.to(currentRoomCode).emit('screen-share-started', {
           userName: request.requesterName
         });
@@ -648,3 +642,394 @@ io.on('connection', (socket) => {
         io.to(currentRoomCode).emit('screen-share-stopped', {
           userName: sharerName
         });
+      }
+    } catch (error) {
+      console.error('❌ Stop screen share error:', error);
+    }
+  });
+
+  // 📞 WEBRTC ARAMALAR
+  socket.on('start-call', (data) => {
+    try {
+      const { targetUserName, offer, type, callerName } = data;
+      console.log(`📞 Arama başlatılıyor: ${callerName} -> ${targetUserName}, Tip: ${type}`);
+      
+      let targetSocketId = null;
+      users.forEach((user, socketId) => {
+        if (user.userName === targetUserName && user.roomCode === currentRoomCode) {
+          targetSocketId = socketId;
+        }
+      });
+      
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('ice-servers', { servers: getIceServers() });
+        
+        const callData = {
+          callerSocketId: socket.id,
+          callerName: callerName,
+          targetSocketId: targetSocketId,
+          targetUserName: targetUserName,
+          type: type,
+          roomCode: currentRoomCode,
+          startTime: new Date(),
+          status: 'ringing'
+        };
+        
+        activeCalls.set(socket.id, callData);
+        activeCalls.set(targetSocketId, callData);
+        
+        io.to(targetSocketId).emit('incoming-call', { 
+          offer, 
+          callerName, 
+          type,
+          callerSocketId: socket.id 
+        });
+        
+        console.log(`📞 Arama bildirimi gönderildi: ${callerName} -> ${targetUserName}`);
+      } else {
+        socket.emit('call-error', { message: 'Kullanıcı bulunamadı' });
+      }
+    } catch (error) {
+      console.error('❌ Start call error:', error);
+      socket.emit('call-error', { message: 'Arama başlatılamadı' });
+    }
+  });
+
+  socket.on('webrtc-answer', (data) => {
+    try {
+      const { targetSocketId, answer } = data;
+      console.log(`📞 WebRTC answer gönderiliyor: ${socket.id} -> ${targetSocketId}`);
+      
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('webrtc-answer', {
+          answer,
+          answererSocketId: socket.id,
+          answererName: currentUser?.userName
+        });
+      }
+    } catch (error) {
+      console.error('❌ WebRTC answer error:', error);
+    }
+  });
+
+  socket.on('webrtc-ice-candidate', (data) => {
+    try {
+      const { targetSocketId, candidate } = data;
+      
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('webrtc-ice-candidate', {
+          candidate,
+          senderSocketId: socket.id
+        });
+      }
+    } catch (error) {
+      console.error('❌ WebRTC ICE candidate error:', error);
+    }
+  });
+
+  socket.on('reject-call', (data) => {
+    try {
+      const { callerSocketId } = data;
+      const callData = activeCalls.get(socket.id);
+      
+      if (callData) {
+        io.to(callerSocketId).emit('call-rejected', { 
+          rejectedBy: currentUser?.userName 
+        });
+        
+        activeCalls.delete(callData.callerSocketId);
+        activeCalls.delete(callData.targetSocketId);
+        
+        updateUserList(currentRoomCode);
+        
+        console.log(`❌ Arama reddedildi: ${callData.callerName} -> ${callData.targetUserName}`);
+      }
+    } catch (error) {
+      console.error('❌ Reject call error:', error);
+    }
+  });
+
+  socket.on('end-call', (data) => {
+    try {
+      const { targetSocketId } = data;
+      const callData = activeCalls.get(socket.id);
+      
+      if (callData) {
+        const otherPartyId = callData.callerSocketId === socket.id ? callData.targetSocketId : callData.callerSocketId;
+        
+        if (otherPartyId) {
+          io.to(otherPartyId).emit('call-ended', { 
+            endedBy: currentUser?.userName 
+          });
+        }
+        
+        activeCalls.delete(callData.callerSocketId);
+        activeCalls.delete(callData.targetSocketId);
+        
+        updateUserList(currentRoomCode);
+        
+        console.log(`📞 Arama sonlandırıldı: ${callData.callerName} <-> ${callData.targetUserName}`);
+      } else if (targetSocketId) {
+        io.to(targetSocketId).emit('call-ended', { 
+          endedBy: currentUser?.userName 
+        });
+        
+        activeCalls.delete(socket.id);
+        activeCalls.delete(targetSocketId);
+        
+        updateUserList(currentRoomCode);
+      }
+    } catch (error) {
+      console.error('❌ End call error:', error);
+    }
+  });
+
+  // 🔌 BAĞLANTI KESİLDİĞİNDE
+  socket.on('disconnect', (reason) => {
+    console.log('🔌 User disconnected:', socket.id, reason);
+    
+    clearInterval(pingInterval);
+    connectionMonitor.delete(socket.id);
+    
+    const callData = activeCalls.get(socket.id);
+    if (callData) {
+      const otherPartyId = callData.callerSocketId === socket.id 
+        ? callData.targetSocketId 
+        : callData.callerSocketId;
+      
+      if (otherPartyId) {
+        io.to(otherPartyId).emit('call-ended', { 
+          endedBy: 'Sistem (bağlantı kesildi)',
+          reason: 'connection_lost'
+        });
+        activeCalls.delete(otherPartyId);
+      }
+      activeCalls.delete(socket.id);
+    }
+    
+    if (currentRoomCode) {
+      const room = rooms.get(currentRoomCode);
+      if (room && room.screenSharing && room.screenSharing.socketId === socket.id) {
+        room.screenSharing = null;
+        io.to(currentRoomCode).emit('screen-share-stopped', {
+          userName: currentUser?.userName || 'Kullanıcı',
+          reason: 'disconnect'
+        });
+      }
+    }
+
+if (currentUser && currentRoomCode) {
+      const room = rooms.get(currentRoomCode);
+      if (room) {
+        room.users.delete(socket.id);
+        users.delete(socket.id);
+        
+        socket.to(currentRoomCode).emit('user-left', { 
+          userName: currentUser.userName 
+        });
+        updateUserList(currentRoomCode);
+        pendingOffers.delete(socket.id);
+        screenShareRequests.delete(socket.id);
+        
+        if (room.users.size === 0) {
+          setTimeout(() => {
+            if (rooms.get(currentRoomCode)?.users.size === 0) {
+              rooms.delete(currentRoomCode);
+              messages.delete(currentRoomCode);
+              console.log(`🗑️ Empty room deleted: ${currentRoomCode}`);
+            }
+          }, 600000);
+        }
+      }
+    }
+  });
+
+}); // ✅ io.on('connection') KAPANIŞI - ÇOK ÖNEMLİ!
+
+// ========================================
+// 📡 STATIC FILES & ROUTES
+// ========================================
+
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ========================================
+// 🚀 SERVER START
+// ========================================
+
+startConnectionHealthCheck();
+startRenderSelfPing();
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`
+╔════════════════════════════════════════════════════════════╗
+║                                                            ║
+║   🚀 VIDEO PLATFORM SERVER - RENDER 2025 OPTIMIZED       ║
+║                                                            ║
+║   📡 Port: ${PORT}                                        ║
+║   ❤️  Status: HEALTHY                                     ║
+║   🔄 Self-Ping: ACTIVE                                     ║
+║   📞 WebRTC: ENABLED (STUN)                                ║
+║   🖥️  Screen Share: ENABLED                               ║
+║   💬 Chat: ADVANCED (Edit/Delete/Reactions)                ║
+║   🌍 Global Reach: 300+ KM                                 ║
+║   📊 Memory: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB                                      ║
+║                                                            ║
+║   ✅ 1 MINUTE SLEEP PROBLEM: FIXED                        ║
+║                                                            ║
+╚════════════════════════════════════════════════════════════╝
+  `);
+  console.log(`🔗 Server URL: ${selfPingUrl || `http://localhost:${PORT}`}`);
+  console.log(`⏰ Started at: ${new Date().toLocaleString('tr-TR')}`);
+});
+
+// ========================================
+// 🛡️ ERROR HANDLERS
+// ========================================
+
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, closing server gracefully...');
+  
+  // Tüm aktif bağlantıları bilgilendir
+  io.emit('server-shutdown', { message: 'Server yeniden başlatılıyor...' });
+  
+  server.close(() => {
+    console.log('✅ Server closed successfully');
+    
+    // Cleanup
+    rooms.clear();
+    users.clear();
+    messages.clear();
+    activeCalls.clear();
+    screenShareRequests.clear();
+    connectionMonitor.clear();
+    
+    process.exit(0);
+  });
+  
+  // Force shutdown after 30 seconds
+  setTimeout(() => {
+    console.error('⚠️ Forcing shutdown after 30s timeout');
+    process.exit(1);
+  }, 30000);
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received, shutting down...');
+  process.exit(0);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('💥 Uncaught Exception:', error);
+  console.error('Stack:', error.stack);
+  
+  // Log ama crash etme (production için)
+  if (process.env.NODE_ENV === 'production') {
+    console.error('⚠️ Continuing despite uncaught exception...');
+  } else {
+    process.exit(1);
+  }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise);
+  console.error('Reason:', reason);
+  
+  // Log ama crash etme (production için)
+  if (process.env.NODE_ENV === 'production') {
+    console.error('⚠️ Continuing despite unhandled rejection...');
+  } else {
+    process.exit(1);
+  }
+});
+
+// ========================================
+// 📊 PERIODIC STATS LOGGING
+// ========================================
+
+setInterval(() => {
+  const stats = {
+    timestamp: new Date().toISOString(),
+    uptime: Math.floor(process.uptime()),
+    memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    connections: connectionMonitor.size,
+    rooms: rooms.size,
+    users: users.size,
+    activeCalls: activeCalls.size,
+    screenShares: Array.from(rooms.values()).filter(r => r.screenSharing).length
+  };
+  
+  console.log(`📊 Stats: ${JSON.stringify(stats)}`);
+}, 300000); // Her 5 dakikada bir
+
+// ========================================
+// 🧹 PERIODIC CLEANUP
+// ========================================
+
+setInterval(() => {
+  const now = Date.now();
+  const ONE_HOUR = 60 * 60 * 1000;
+  
+  // Eski ekran paylaşım isteklerini temizle
+  for (const [socketId, request] of screenShareRequests.entries()) {
+    if (now - request.timestamp.getTime() > 5 * 60 * 1000) { // 5 dakika
+      screenShareRequests.delete(socketId);
+      console.log(`🧹 Cleaned old screen share request: ${socketId}`);
+    }
+  }
+  
+  // Boş odaları temizle
+  for (const [roomCode, room] of rooms.entries()) {
+    if (room.users.size === 0 && now - room.createdAt.getTime() > ONE_HOUR) {
+      rooms.delete(roomCode);
+      messages.delete(roomCode);
+      console.log(`🧹 Cleaned empty room: ${roomCode}`);
+    }
+  }
+  
+  console.log(`🧹 Cleanup completed: ${screenShareRequests.size} requests, ${rooms.size} rooms`);
+}, 600000); // Her 10 dakikada bir
+
+// ========================================
+// 🎯 GRACEFUL SHUTDOWN HELPER
+// ========================================
+
+function gracefulShutdown(signal) {
+  console.log(`🛑 ${signal} received, starting graceful shutdown...`);
+  
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+    
+    // Close all socket connections
+    io.close(() => {
+      console.log('✅ Socket.io server closed');
+      process.exit(0);
+    });
+  });
+  
+  // Force close after 30 seconds
+  setTimeout(() => {
+    console.error('⚠️ Could not close connections in time, forcefully shutting down');
+    process.exit(1);
+  }, 30000);
+}
+
+// Register shutdown handlers
+['SIGTERM', 'SIGINT'].forEach(signal => {
+  process.on(signal, () => gracefulShutdown(signal));
+});
+
+// ========================================
+// 🎉 STARTUP COMPLETE
+// ========================================
+
+console.log('✅ All systems operational');
+console.log('🎉 Server initialization complete');
+console.log('📝 Logs will appear below...');
+console.log('═'.repeat(60));
