@@ -1,0 +1,75 @@
+{
+  "name": "video-platform-render-2025",
+  "version": "2025.1.0",
+  "description": "🚀 Production-Ready Video Platform - Render Optimized with WebRTC, Screen Share & Advanced Features",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node --max-old-space-size=512 server.js",
+    "dev": "nodemon --max-old-space-size=512 server.js",
+    "render-build": "npm ci --production",
+    "postinstall": "echo '✅ Dependencies installed successfully'",
+    "health-check": "curl -f http://localhost:${PORT:-10000}/health || exit 1",
+    "lint": "echo 'No linting configured'",
+    "test": "echo 'No tests configured'"
+  },
+  "keywords": [
+    "render",
+    "webrtc",
+    "video-platform",
+    "screen-sharing",
+    "real-time",
+    "socket.io",
+    "youtube-api",
+    "peer-to-peer",
+    "video-streaming",
+    "chat",
+    "collaboration",
+    "production-ready",
+    "2025"
+  ],
+  "author": {
+    "name": "crha-spec",
+    "email": "crissahahhaha@gmail.com",
+    "url": "https://github.com/crha-spec"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/crha-spec/yepyenuuu.git"
+  },
+  "bugs": {
+    "url": "https://github.com/crha-spec/yepyenuuu/issues"
+  },
+  "homepage": "https://github.com/crha-spec/yepyenuuu#readme",
+  "engines": {
+    "node": ">=20.11.0",
+    "npm": ">=10.2.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "compression": "^1.7.4",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "optionalDependencies": {},
+  "peerDependencies": {},
+  "bundledDependencies": [],
+  "private": false,
+  "config": {
+    "unsafe-perm": true
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
